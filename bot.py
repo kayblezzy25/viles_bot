@@ -1,33 +1,12 @@
 """
-Telegram Channel Auto-Poster Bot — Definitive Version
-======================================================
-Synthesizes every bug found and fixed across all versions reviewed:
-
-FIXED FROM ORIGINAL SHARED DOCUMENT (Python version):
-  [B1] threading.Lock deadlock — APScheduler sync thread called async bot.send_message()
-  [B2] Async/sync mismatch — coroutine never awaited, posts never sent
-  [B3] openai.api_key = ... is v0 syntax, silently ignored by openai v1.x
-  [B4] render.yaml type: web requires HTTP port binding — crashes on Render
-  [B5] All state in-memory — any restart wipes all running campaigns
-
-FIXED FROM KIMI AGENT ZIP:
-  [B6] Two-step /write captured ANY admin's next message as topic — race condition
-  [B7] No daily post limit — all 50 posts fired in ~17 hours, not 5 days
-  [B8] Redundant APScheduler pin conflicted with PTB's bundled version
-
-ARCHITECTURE DECISIONS (from best-of all versions):
-  - PTB's native job_queue (no APScheduler at all — eliminates B1, B2, B8)
-  - AsyncOpenAI (correct v1.x — eliminates B3)
-  - render.yaml type: worker (eliminates B4)
-  - JSON persistence + startup resume (eliminates B5)
-  - /write [topic] inline args (eliminates B6)
-  - Date-aware daily counter (eliminates B7)
-  - ChatMemberHandler — auto-cleanup when bot is removed from a channel
+Telegram Channel Auto-Poster Bot — Fixed for Render Deployment
 """
 
 import os
+import sys
 import json
 import logging
+import asyncio
 from datetime import date, datetime, timedelta
 
 from dotenv import load_dotenv
@@ -40,25 +19,40 @@ from telegram.ext import (
 )
 from openai import AsyncOpenAI
 
+# Force flush stdout/stderr immediately
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
 load_dotenv()
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+# ── Logging (force immediate output) ──────────────────────────────────────────
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     level=logging.INFO,
+    handlers=[logging.StreamHandler(sys.stdout)],  # Explicitly output to stdout
 )
 logger = logging.getLogger("bot")
+
+# Log immediately so we know the script started
+logger.info("=" * 60)
+logger.info("BOT STARTING UP...")
+logger.info("=" * 60)
 
 # ── Environment ───────────────────────────────────────────────────────────────
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 OPENAI_API_KEY     = os.getenv("OPENAI_API_KEY", "")
 
+logger.info(f"TELEGRAM_BOT_TOKEN present: {bool(TELEGRAM_BOT_TOKEN)}")
+logger.info(f"OPENAI_API_KEY present: {bool(OPENAI_API_KEY)}")
+
 if not TELEGRAM_BOT_TOKEN:
-    raise SystemExit("TELEGRAM_BOT_TOKEN is not set.")
+    logger.error("TELEGRAM_BOT_TOKEN is not set!")
+    sys.exit(1)
 if not OPENAI_API_KEY:
-    raise SystemExit("OPENAI_API_KEY is not set.")
+    logger.error("OPENAI_API_KEY is not set!")
+    sys.exit(1)
 
 # Campaign constants (override via env vars if needed)
 POST_INTERVAL_MIN = int(os.getenv("POST_INTERVAL_MINUTES", "20"))
@@ -66,41 +60,65 @@ POSTS_PER_DAY     = int(os.getenv("POSTS_PER_DAY",         "10"))
 MAX_DAYS          = int(os.getenv("MAX_DAYS",               "5"))
 MAX_TOTAL         = POSTS_PER_DAY * MAX_DAYS  # 50
 
-# OpenAI (FIX B3: correct AsyncOpenAI v1.x — no module-level api_key assignment)
+logger.info(f"Config: {POST_INTERVAL_MIN}min, {POSTS_PER_DAY}posts/day, {MAX_DAYS}days")
+
+# OpenAI
 openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 # ── Persistence ───────────────────────────────────────────────────────────────
-# (FIX B5: JSON file replaces pure in-memory dict)
 
-_DATA_FILE = os.path.join(os.path.dirname(__file__), "data", "channels.json")
+# Use absolute path for Render disk or local fallback
+if os.path.exists("/opt/render/project/src/data"):
+    DATA_DIR = "/opt/render/project/src/data"
+else:
+    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
+_DATA_FILE = os.path.join(DATA_DIR, "channels.json")
+
+logger.info(f"Data directory: {DATA_DIR}")
+logger.info(f"Data file: {_DATA_FILE}")
+
+def _ensure_data_dir():
+    """Ensure data directory exists"""
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        logger.info(f"Data directory verified: {DATA_DIR}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to create data directory: {e}")
+        return False
 
 def _load() -> dict:
-    os.makedirs(os.path.dirname(_DATA_FILE), exist_ok=True)
+    """Load channel data from JSON file"""
     if not os.path.exists(_DATA_FILE):
+        logger.info(f"Data file not found, starting fresh")
         return {}
     try:
         with open(_DATA_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
+            data = json.load(f)
+            logger.info(f"Loaded {len(data)} channel(s) from disk")
+            return data
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error(f"Failed to load data file: {e}")
         return {}
 
-
 def _dump(data: dict) -> None:
-    os.makedirs(os.path.dirname(_DATA_FILE), exist_ok=True)
-    with open(_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
+    """Save channel data to JSON file"""
+    try:
+        _ensure_data_dir()
+        with open(_DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        logger.debug(f"Saved {len(data)} channel(s) to disk")
+    except Exception as e:
+        logger.error(f"Failed to save data: {e}")
 
 def _get(chat_id: int) -> dict | None:
     return _load().get(str(chat_id))
-
 
 def _set(chat_id: int, record: dict) -> None:
     data = _load()
     data[str(chat_id)] = record
     _dump(data)
-
 
 def _delete(chat_id: int) -> None:
     data = _load()
@@ -118,46 +136,46 @@ _THEMES = [
     "an advanced insight or expert-level perspective",
 ]
 
-
 async def _generate_post(topic: str, post_num: int) -> str:
     """Generate one unique post via OpenAI GPT-4o-mini."""
     theme = _THEMES[(post_num - 1) % len(_THEMES)]
-    response = await openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a professional Telegram channel content writer. "
-                    "Write engaging posts with relevant emojis. "
-                    "150–270 words, short paragraphs, no titles or post numbers."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Channel topic: {topic}\n\n"
-                    f"Write post #{post_num} of {MAX_TOTAL}. "
-                    f"Focus this post on: {theme}. "
-                    f"Make it feel completely fresh and distinct."
-                ),
-            },
-        ],
-        max_tokens=550,
-        temperature=0.85,
-    )
-    return response.choices[0].message.content.strip()
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a professional Telegram channel content writer. "
+                        "Write engaging posts with relevant emojis. "
+                        "150–270 words, short paragraphs, no titles or post numbers."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Channel topic: {topic}\n\n"
+                        f"Write post #{post_num} of {MAX_TOTAL}. "
+                        f"Focus this post on: {theme}. "
+                        f"Make it feel completely fresh and distinct."
+                    ),
+                },
+            ],
+            max_tokens=550,
+            temperature=0.85,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"OpenAI API error: {e}")
+        return f"📝 {topic}\n\nPost #{post_num} of {MAX_TOTAL}\n\nStay tuned for more insights!"
 
 
-# ── Scheduler job (runs every POST_INTERVAL_MIN minutes per channel) ───────────
-# FIX B1+B2: PTB's native job_queue runs this as a proper async coroutine on
-# the same event loop — no threading, no APScheduler, no unawaited coroutines.
+# ── Scheduler job ───────────────────────────────────────────────────────────
 
 async def _posting_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id: int = context.job.chat_id  # type: ignore[assignment]
     record = _get(chat_id)
 
-    # ── Guard: deactivated externally ────────────────────────────────────────
     if not record or not record.get("active"):
         context.job.schedule_removal()
         logger.info(f"[{chat_id}] Job removed — campaign inactive.")
@@ -165,7 +183,6 @@ async def _posting_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     total_sent = record["total_sent"]
 
-    # ── Guard: campaign complete ──────────────────────────────────────────────
     if total_sent >= MAX_TOTAL:
         record["active"] = False
         _set(chat_id, record)
@@ -184,7 +201,7 @@ async def _posting_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.error(f"[{chat_id}] Completion message failed: {e}")
         return
 
-    # ── FIX B7: Daily post limit ──────────────────────────────────────────────
+    # Daily post limit
     today = str(date.today())
     if record.get("last_post_date") != today:
         record["posts_today"]    = 0
@@ -193,10 +210,10 @@ async def _posting_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info(f"[{chat_id}] New day — daily counter reset.")
 
     if record["posts_today"] >= POSTS_PER_DAY:
-        logger.info(f"[{chat_id}] Daily limit ({POSTS_PER_DAY}) reached — skipping tick.")
+        logger.info(f"[{chat_id}] Daily limit ({POSTS_PER_DAY}) reached — skipping.")
         return
 
-    # ── Generate and post ─────────────────────────────────────────────────────
+    # Generate and post
     post_num = total_sent + 1
     try:
         text = await _generate_post(record["topic"], post_num)
@@ -216,7 +233,6 @@ async def _posting_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     except Exception as e:
         logger.error(f"[{chat_id}] Failed to send post #{post_num}: {e}")
-        # Bot was kicked or banned — deactivate cleanly
         if any(k in str(e) for k in ("kicked", "Forbidden", "chat not found", "blocked")):
             logger.warning(f"[{chat_id}] Bot removed from channel — deactivating.")
             record["active"] = False
@@ -225,7 +241,7 @@ async def _posting_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def _register_job(app: Application, chat_id: int) -> None:
-    """Register (or re-register) the 20-min repeating job for a channel."""
+    """Register the repeating job for a channel."""
     # Remove any existing job first
     for job in app.job_queue.get_jobs_by_name(str(chat_id)):
         job.schedule_removal()
@@ -233,14 +249,14 @@ def _register_job(app: Application, chat_id: int) -> None:
     app.job_queue.run_repeating(
         callback=_posting_job,
         interval=POST_INTERVAL_MIN * 60,
-        first=POST_INTERVAL_MIN * 60,   # First post after 20 min
+        first=POST_INTERVAL_MIN * 60,
         chat_id=chat_id,
         name=str(chat_id),
     )
     logger.info(f"[{chat_id}] Job registered — every {POST_INTERVAL_MIN} min.")
 
 
-# ── /start ─────────────────────────────────────────────────────────────────────
+# ── Command handlers ─────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
@@ -262,11 +278,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
     await update.effective_message.reply_text(msg, parse_mode="Markdown")
 
-
-# ── /write ─────────────────────────────────────────────────────────────────────
-# FIX B6: Topic is read from inline args (/write [topic]), NOT from a subsequent
-# message. The two-step flow had a race condition — any admin's next message in
-# the channel would be silently captured as the topic.
 
 async def cmd_write(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
@@ -336,8 +347,6 @@ async def cmd_write(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-# ── /status ────────────────────────────────────────────────────────────────────
-
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat   = update.effective_chat
     record = _get(chat.id)
@@ -378,8 +387,6 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
-# ── /stop ──────────────────────────────────────────────────────────────────────
-
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat   = update.effective_chat
     record = _get(chat.id)
@@ -401,8 +408,6 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-# ── /restart ───────────────────────────────────────────────────────────────────
-
 async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
     for job in context.job_queue.get_jobs_by_name(str(chat.id)):
@@ -413,8 +418,6 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         parse_mode="Markdown",
     )
 
-
-# ── /help ──────────────────────────────────────────────────────────────────────
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
@@ -475,14 +478,14 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(f"Unhandled error: {context.error}", exc_info=context.error)
 
 
-# ── Startup: resume all active campaigns (FIX B5) ─────────────────────────────
+# ── Startup: resume all active campaigns ─────────────────────────────────────
 
 async def on_startup(app: Application) -> None:
-    """
-    Called once after PTB initializes.
-    Reloads all active channel records from JSON and re-registers their jobs.
-    Without this, every Render.com restart would silently abandon all campaigns.
-    """
+    """Called once after PTB initializes. Resumes all active campaigns."""
+    logger.info("=" * 60)
+    logger.info("ON_STARTUP CALLED - Resuming campaigns...")
+    logger.info("=" * 60)
+    
     all_records = _load()
     resumed = 0
     for chat_id_str, record in all_records.items():
@@ -494,15 +497,19 @@ async def on_startup(app: Application) -> None:
             )
             resumed += 1
     logger.info(f"Startup complete — resumed {resumed} active campaign(s).")
+    logger.info("Bot is now running and listening for commands!")
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
-def main() -> None:
+async def main_async() -> None:
+    """Async main function to run the bot"""
+    logger.info("Building application...")
+    
     app = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
-        .post_init(on_startup)          # Resume campaigns on restart
+        .post_init(on_startup)
         .build()
     )
 
@@ -515,11 +522,26 @@ def main() -> None:
     app.add_handler(ChatMemberHandler(on_member_update))
     app.add_error_handler(on_error)
 
-    logger.info("Starting bot (long polling)...")
-    app.run_polling(
+    logger.info("Starting bot polling...")
+    await app.run_polling(
         allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,      # Ignore messages sent while bot was offline
+        drop_pending_updates=True,
     )
+
+
+def main() -> None:
+    """Synchronous entry point for Render"""
+    logger.info("=" * 60)
+    logger.info("BOT MAIN FUNCTION CALLED")
+    logger.info("=" * 60)
+    
+    try:
+        asyncio.run(main_async())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
