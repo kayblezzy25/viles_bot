@@ -1,0 +1,7 @@
+# FIX B1+B2+B8: python-telegram-bot[job-queue] bundles APScheduler internally
+# and exposes it as a fully async-native JobQueue. No need to install or pin
+# APScheduler separately — doing so risks version conflicts (Bug B8 from Kimi zip).
+
+python-telegram-bot[job-queue]==20.7
+openai==1.6.1
+python-dotenv==1.0.0
