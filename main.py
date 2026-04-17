@@ -356,3 +356,18 @@ def main():
 
 if __name__ == '__main__':
     main()
+# Add to main.py temporarily for debugging
+async def debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Debug command to check if bot is receiving messages"""
+    info = f"""
+📊 Debug Info:
+Chat ID: {update.effective_chat.id}
+Chat Type: {update.effective_chat.type}
+User ID: {update.effective_user.id if update.effective_user else 'N/A'}
+Message: {update.message.text if update.message else 'N/A'}
+    """
+    await update.message.reply_text(info)
+    logger.info(f"Debug command received: {info}")
+
+# Add to handlers
+application.add_handler(CommandHandler("debug", debug))
