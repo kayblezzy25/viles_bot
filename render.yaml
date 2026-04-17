@@ -1,18 +1,12 @@
 # Render.com deployment configuration
-# This file tells Render how to build and deploy your bot
+# Using Docker to ensure Python 3.11 (avoids Python 3.14 compatibility issues)
 
 services:
   - type: worker
     name: telegram-ai-content-bot
-    runtime: python
+    runtime: docker
     plan: free  # Change to 'standard' for 24/7 operation
-    buildCommand: |
-      pip install --upgrade pip
-      pip install -r requirements.txt
-    startCommand: python bot.py
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.11"
       - key: BOT_TOKEN
         sync: false  # Set this in Render dashboard
       - key: OPENAI_API_KEY
