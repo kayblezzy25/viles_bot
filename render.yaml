@@ -9,3 +9,5 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: PYTHONUNBUFFERED
+        value: "1"
