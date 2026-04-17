@@ -21,7 +21,7 @@ from telegram.constants import ChatType
 
 from database import ChannelManager, PostManager, init_db
 from openai_client import ContentGenerator, get_fallback_content
-from keep_alive import start_keep_alive_server, setup_self_healing
+from keep_alive import setup_self_healing
 
 # Configure logging
 logging.basicConfig(
@@ -533,11 +533,12 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def post_init(application: Application) -> None:
     """Post-initialization hook to setup self-healing and keep-alive."""
-    # Start keep-alive server
-    await start_keep_alive_server(PORT)
-    
-    # Setup self-healing scheduler
-    await setup_self_healing(application)
+    try:
+        # Setup self-healing scheduler (restore jobs from database)
+        await setup_self_healing(application)
+        logger.info("Self-healing scheduler setup complete!")
+    except Exception as e:
+        logger.warning(f"Self-healing setup failed (non-critical): {e}")
     
     logger.info("Bot initialization complete!")
 
