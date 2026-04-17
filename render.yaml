@@ -5,7 +5,7 @@ services:
   - type: web
     name: telegram-ai-content-bot
     runtime: python
-    plan: standard
+    plan: free  # Change to 'standard' for 24/7 operation
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     envVars:
@@ -19,5 +19,7 @@ services:
         sync: false  # Set this in Render dashboard (optional)
       - key: DATABASE_URL
         sync: false  # Set this in Render dashboard (optional, defaults to SQLite)
+      - key: PORT
+        value: 10000
     healthCheckPath: /health
     autoDeploy: true

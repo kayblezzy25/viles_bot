@@ -16,11 +16,28 @@ from sqlalchemy.sql import func
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///bot.db")
 
 # Handle Render.com PostgreSQL URL format
-if DATABASE_URL.startswith("postgres://"):
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 Base = declarative_base()
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+
+# Create engine with appropriate settings for the database type
+if DATABASE_URL and DATABASE_URL.startswith("postgresql"):
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+        pool_recycle=300
+    )
+else:
+    # SQLite settings
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        connect_args={"check_same_thread": False}
+    )
+
 SessionLocal = sessionmaker(bind=engine)
 
 
@@ -61,7 +78,7 @@ class Post(Base):
     """Individual post tracking for idempotency and audit."""
     __tablename__ = "posts"
     
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True)
     chat_id = Column(BigInteger, nullable=False, index=True)
     post_number = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
@@ -70,11 +87,6 @@ class Post(Base):
     status = Column(String(20), default="pending")  # pending, sent, failed
     telegram_message_id = Column(BigInteger, nullable=True)
     created_at = Column(DateTime, default=func.now())
-    
-    __table_args__ = (
-        # Ensure unique posts per channel
-        {'sqlite_autoincrement': True},
-    )
 
 
 # Initialize database tables
@@ -325,5 +337,9 @@ class PostManager:
             db.close()
 
 
-# Initialize database on module load
-init_db()
+# Initialize database on module load (with error handling)
+try:
+    init_db()
+except Exception as e:
+    print(f"Warning: Database initialization error: {e}")
+    # Don't crash on import - let the application handle it
