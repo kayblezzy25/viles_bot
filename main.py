@@ -2,10 +2,10 @@ import os
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Set
+from typing import Dict
 from dotenv import load_dotenv
-from telegram import Update, Bot
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from openai import OpenAI
 
 # Load environment variables
@@ -19,13 +19,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client
-openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+openai_api_key = os.getenv('OPENAI_API_KEY')
+if openai_api_key:
+    openai_client = OpenAI(api_key=openai_api_key)
+else:
+    logger.error("OPENAI_API_KEY not found in environment variables")
+    openai_client = None
 
 class ChannelPostScheduler:
     def __init__(self):
         # Store active channels and their posting schedules
         self.active_channels: Dict[int, Dict] = {}
-        self.post_counts: Dict[int, Dict[str, int]] = {}
         
     def add_channel(self, chat_id: int, topic: str, content_plan: str):
         """Add a channel to the posting schedule"""
@@ -36,11 +40,8 @@ class ChannelPostScheduler:
             'posts_today': 0,
             'total_posts': 0,
             'day_number': 1,
-            'last_post_time': None
-        }
-        self.post_counts[chat_id] = {
-            'daily': 0,
-            'total': 0,
+            'last_post_time': None,
+            'daily_count': 0,
             'current_day': 1
         }
         logger.info(f"Channel {chat_id} added to schedule with topic: {topic}")
@@ -49,7 +50,6 @@ class ChannelPostScheduler:
         """Remove a channel from the posting schedule"""
         if chat_id in self.active_channels:
             del self.active_channels[chat_id]
-            del self.post_counts[chat_id]
             logger.info(f"Channel {chat_id} removed from schedule")
     
     def can_post(self, chat_id: int) -> bool:
@@ -58,22 +58,22 @@ class ChannelPostScheduler:
             return False
             
         channel_data = self.active_channels[chat_id]
-        counts = self.post_counts[chat_id]
         
         # Check daily limit (10 posts per day)
-        if counts['daily'] >= 10:
+        if channel_data['daily_count'] >= 10:
             return False
             
         # Check total limit (50 posts in 5 days)
-        if counts['total'] >= 50:
+        if channel_data['total_posts'] >= 50:
             return False
             
         # Check if we need to reset daily count
         if channel_data['last_post_time']:
             days_passed = (datetime.now() - channel_data['start_time']).days
-            if days_passed >= counts['current_day']:
-                counts['current_day'] = days_passed + 1
-                counts['daily'] = 0
+            if days_passed >= channel_data['current_day']:
+                channel_data['current_day'] = days_passed + 1
+                channel_data['daily_count'] = 0
+                logger.info(f"Reset daily count for channel {chat_id} to day {channel_data['current_day']}")
                 
         return True
     
@@ -81,29 +81,34 @@ class ChannelPostScheduler:
         """Record that a post was made"""
         if chat_id in self.active_channels:
             self.active_channels[chat_id]['last_post_time'] = datetime.now()
-            self.active_channels[chat_id]['posts_today'] += 1
+            self.active_channels[chat_id]['daily_count'] += 1
             self.active_channels[chat_id]['total_posts'] += 1
             
-            self.post_counts[chat_id]['daily'] += 1
-            self.post_counts[chat_id]['total'] += 1
-            
-            logger.info(f"Post recorded for channel {chat_id}. Daily: {self.post_counts[chat_id]['daily']}/10, Total: {self.post_counts[chat_id]['total']}/50")
+            logger.info(f"Post recorded for channel {chat_id}. Daily: {self.active_channels[chat_id]['daily_count']}/10, Total: {self.active_channels[chat_id]['total_posts']}/50")
+    
+    def get_status(self, chat_id: int) -> Dict:
+        """Get status for a channel"""
+        if chat_id in self.active_channels:
+            return self.active_channels[chat_id]
+        return None
 
 # Initialize scheduler
 scheduler = ChannelPostScheduler()
 
 async def generate_post_content(topic: str, content_plan: str, post_number: int) -> str:
     """Generate post content using OpenAI"""
+    if not openai_client:
+        return f"📝 Post #{post_number}\n\nTopic: {topic}\n\n{content_plan}\n\n(OpenAI API key not configured - using template content)"
+    
     try:
         prompt = f"""Create an engaging Telegram channel post about: {topic}
         
-        Content guidelines: {content_plan}
-        
-        Post #{post_number} in a series of 50 posts.
-        Make it informative, engaging, and suitable for a Telegram channel.
-        Keep it between 200-400 words.
-        Include relevant emojis where appropriate.
-        Don't use markdown formatting that might not render well."""
+Content guidelines: {content_plan}
+
+Post #{post_number} in a series of 50 posts.
+Make it informative, engaging, and suitable for a Telegram channel.
+Keep it between 200-400 words.
+Include relevant emojis where appropriate."""
         
         response = openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -118,7 +123,7 @@ async def generate_post_content(topic: str, content_plan: str, post_number: int)
         return response.choices[0].message.content.strip()
     except Exception as e:
         logger.error(f"Error generating content: {e}")
-        return f"Error generating content for post #{post_number}. Please try again later."
+        return f"📝 Post #{post_number}\n\nTopic: {topic}\n\n{content_plan}\n\n(Error generating AI content - using template)"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
@@ -136,45 +141,43 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def write(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /write command - Start content setup"""
     chat_id = update.effective_chat.id
+    chat_type = update.effective_chat.type
     
-    # Check if this is a channel or group
-    if update.effective_chat.type in ['channel', 'group', 'supergroup']:
-        await update.message.reply_text(
-            "📝 *Content Setup*\n\n"
-            "I'll ask you a few questions to set up content for this channel.\n\n"
-            "First question: *What is the main topic/theme of this channel?*",
-            parse_mode='Markdown'
-        )
-        context.user_data['setup_stage'] = 'topic'
-        context.user_data['channel_id'] = chat_id
-    else:
-        await update.message.reply_text(
-            "Please use this command in a channel where I'm an admin."
-        )
+    logger.info(f"Write command received in chat {chat_id} of type {chat_type}")
+    
+    # Store chat_id in user_data for the setup process
+    context.user_data['setup_stage'] = 'topic'
+    context.user_data['channel_id'] = chat_id
+    
+    await update.message.reply_text(
+        "📝 *Content Setup*\n\n"
+        "I'll ask you a few questions to set up content for this channel.\n\n"
+        "First question: *What is the main topic/theme of this channel?*",
+        parse_mode='Markdown'
+    )
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Check posting status for the channel"""
     chat_id = update.effective_chat.id
     
-    if chat_id in scheduler.active_channels:
-        channel_data = scheduler.active_channels[chat_id]
-        counts = scheduler.post_counts[chat_id]
-        
+    channel_data = scheduler.get_status(chat_id)
+    
+    if channel_data:
         status_message = (
             f"📊 *Posting Status*\n\n"
             f"*Topic:* {channel_data['topic']}\n"
-            f"*Daily Posts:* {counts['daily']}/10\n"
-            f"*Total Posts:* {counts['total']}/50\n"
-            f"*Current Day:* {counts['current_day']}/5\n"
+            f"*Daily Posts:* {channel_data['daily_count']}/10\n"
+            f"*Total Posts:* {channel_data['total_posts']}/50\n"
+            f"*Current Day:* {channel_data['current_day']}/5\n"
             f"*Started:* {channel_data['start_time'].strftime('%Y-%m-%d %H:%M')}\n\n"
         )
         
         if scheduler.can_post(chat_id):
             status_message += "✅ Ready for next post"
         else:
-            if counts['daily'] >= 10:
+            if channel_data['daily_count'] >= 10:
                 status_message += "⏸ Daily limit reached"
-            elif counts['total'] >= 50:
+            elif channel_data['total_posts'] >= 50:
                 status_message += "✅ Completed all 50 posts"
                 
         await update.message.reply_text(status_message, parse_mode='Markdown')
@@ -187,7 +190,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Stop posting in the channel"""
     chat_id = update.effective_chat.id
     
-    if chat_id in scheduler.active_channels:
+    if scheduler.get_status(chat_id):
         scheduler.remove_channel(chat_id)
         await update.message.reply_text("🛑 Posting schedule stopped for this channel.")
     else:
@@ -200,6 +203,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     stage = context.user_data['setup_stage']
     message_text = update.message.text
+    chat_id = context.user_data.get('channel_id')
+    
+    logger.info(f"Setup stage: {stage}, Chat ID: {chat_id}")
     
     if stage == 'topic':
         context.user_data['topic'] = message_text
@@ -218,7 +224,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif stage == 'content_plan':
         topic = context.user_data['topic']
         content_plan = message_text
-        chat_id = context.user_data['channel_id']
         
         # Add channel to scheduler
         scheduler.add_channel(chat_id, topic, content_plan)
@@ -231,7 +236,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• 10 posts per day\n"
             f"• Every 20 minutes\n"
             f"• Total 50 posts over 5 days\n\n"
-            f"The first post will be sent in 20 minutes!",
+            f"The first post will be sent in 1 minute!",
             parse_mode='Markdown'
         )
         
@@ -245,9 +250,16 @@ async def posting_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     """Main posting loop for a channel"""
     bot = context.bot
     
-    while chat_id in scheduler.active_channels:
+    # Wait 1 minute before first post
+    await asyncio.sleep(60)
+    
+    while True:
+        channel_data = scheduler.get_status(chat_id)
+        if not channel_data:
+            logger.info(f"Channel {chat_id} no longer in scheduler, stopping posting loop")
+            break
+            
         if scheduler.can_post(chat_id):
-            channel_data = scheduler.active_channels[chat_id]
             post_number = channel_data['total_posts'] + 1
             
             try:
@@ -270,7 +282,8 @@ async def posting_loop(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
                 logger.info(f"Posted content #{post_number} to channel {chat_id}")
                 
                 # Check if completed
-                if scheduler.post_counts[chat_id]['total'] >= 50:
+                updated_data = scheduler.get_status(chat_id)
+                if updated_data and updated_data['total_posts'] >= 50:
                     await bot.send_message(
                         chat_id=chat_id,
                         text="🎉 *Completed!*\n\nAll 50 posts have been sent over the past 5 days. Thank you for using Channel Content Bot!",
@@ -290,7 +303,10 @@ def main():
     # Get bot token from environment
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     if not token:
+        logger.error("TELEGRAM_BOT_TOKEN environment variable is not set")
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set")
+    
+    logger.info("Starting bot...")
     
     # Create application
     application = Application.builder().token(token).build()
@@ -305,7 +321,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Start the bot
-    logger.info("Bot started successfully!")
+    logger.info("Bot started successfully! Polling for updates...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
