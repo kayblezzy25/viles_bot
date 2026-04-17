@@ -1,136 +1,288 @@
-# Telegram Channel Auto-Poster Bot
+# Telegram Multi-Channel AI Content Bot
 
-AI-powered multi-agent Telegram bot. Add it to any number of channels — it manages each one independently, posting OpenAI-generated content every 20 minutes (10/day for 5 days, 50 total).
+An intelligent Telegram bot that automatically generates and posts AI-powered content to multiple channels. Perfect for content creators, marketers, and community managers who want consistent, high-quality posts without manual effort.
 
----
+## Features
+
+- **Multi-Channel Support**: Add the bot to unlimited channels, each with independent campaigns
+- **AI-Powered Content**: Uses OpenAI GPT to generate engaging, unique posts
+- **Automatic Scheduling**: Posts every 20 minutes (10 posts/day, 50 posts total over 5 days)
+- **Dynamic Registration**: No channel IDs needed - works automatically when added to any channel
+- **Admin Controls**: Start, stop, pause, and resume campaigns with simple commands
+- **Self-Healing**: Recovers scheduled jobs after server restarts
+- **Daily Limits**: Automatically enforces 10 posts per day, resets at midnight UTC
 
 ## Commands
 
-| Command | What it does |
-|---------|-------------|
-| `/start` | Welcome message and instructions |
-| `/write [topic]` | Start a campaign — describe your channel inline |
-| `/status` | Check posting progress for this channel |
-| `/stop` | Pause the current campaign |
-| `/restart` | Clear campaign and start fresh |
-| `/help` | Show all commands |
+| Command | Description | Usage |
+|---------|-------------|-------|
+| `/start` | Show welcome message and bot info | `/start` |
+| `/write` | Start a new content campaign | `/write [topic]` |
+| `/status` | Check campaign progress | `/status` |
+| `/stop` | Pause the current campaign | `/stop` |
+| `/resume` | Resume a paused campaign | `/resume` |
 
-### Example
+## Quick Start
 
-```
-/write A daily crypto channel for beginners — Bitcoin, Ethereum, DeFi tips and market analysis
-```
+### 1. Create a Telegram Bot
 
-The bot generates posts and starts posting every 20 min — no confirmation step needed.
+1. Message [@BotFather](https://t.me/BotFather) on Telegram
+2. Send `/newbot` and follow instructions
+3. Copy your bot token (you'll need it later)
 
----
+### 2. Get OpenAI API Key
 
-## Setup
-
-### 1. Create your Telegram bot
-
-1. Open Telegram → search **@BotFather**
-2. `/newbot` → follow prompts → copy your **bot token**
-3. Register commands (optional but nice):
-   ```
-   /setcommands → your bot
-   start - Start the bot
-   write - Start a new posting campaign
-   status - Check campaign progress
-   stop - Stop the campaign
-   restart - Clear and start fresh
-   help - Show commands
-   ```
-4. **Disable Group Privacy** so the bot can read commands in channels:
-   BotFather → `/setprivacy` → your bot → Disable
-
-### 2. Add bot to your channels
-
-For each channel:
-1. Channel settings → **Administrators** → Add Administrator
-2. Search your bot's username
-3. Enable **Post Messages** permission → confirm
+1. Go to [OpenAI Platform](https://platform.openai.com/api-keys)
+2. Create a new API key
+3. Copy the key (you'll need it later)
 
 ### 3. Deploy to Render.com
 
-**Step 1 — Push to GitHub**
+#### Option A: One-Click Deploy (Recommended)
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
+
+1. Click the button above
+2. Connect your GitHub account
+3. Fill in environment variables:
+   - `BOT_TOKEN`: Your Telegram bot token
+   - `OPENAI_API_KEY`: Your OpenAI API key
+4. Click "Deploy"
+
+#### Option B: Manual Deploy
+
+1. Fork/clone this repository to GitHub
+2. Log in to [Render.com](https://render.com)
+3. Click "New +" → "Web Service"
+4. Connect your GitHub repository
+5. Configure:
+   - **Name**: `telegram-ai-bot` (or your preference)
+   - **Environment**: `Python 3`
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `python bot.py`
+6. Add environment variables:
+   - `BOT_TOKEN`: Your Telegram bot token
+   - `OPENAI_API_KEY`: Your OpenAI API key
+   - `WEBHOOK_URL`: `https://your-service-name.onrender.com`
+7. Click "Create Web Service"
+
+### 4. Add Bot to Your Channel
+
+1. Add your bot to any Telegram channel as an **Administrator**
+2. Grant these permissions:
+   - ✅ Post messages
+   - ✅ Edit messages
+   - ✅ Delete messages
+3. In the channel, send: `/write [your topic]`
+
+**Example:**
+```
+/write Daily productivity tips for entrepreneurs
+```
+
+The bot will immediately generate the first post and continue every 20 minutes!
+
+## Local Development
+
+### Prerequisites
+
+- Python 3.11+
+- pip
+
+### Setup
+
+1. Clone the repository:
 ```bash
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin https://github.com/yourusername/telegram-bot
-git push -u origin main
+git clone https://github.com/yourusername/telegram-ai-bot.git
+cd telegram-ai-bot
 ```
 
-**Step 2 — Create the service**
-1. [render.com](https://render.com) → **New → Background Worker**
-2. Connect your GitHub repo
-3. Settings:
-   - Runtime: **Python**
-   - Build Command: `pip install -r requirements.txt`
-   - Start Command: `python bot.py`
-   - Plan: **Starter ($7/mo)** — essential so the bot never sleeps
+2. Create virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
 
-**Step 3 — Add environment variables**
-In your service → Environment:
-| Key | Value |
-|-----|-------|
-| `TELEGRAM_BOT_TOKEN` | From BotFather |
-| `OPENAI_API_KEY` | From platform.openai.com |
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-**Step 4 — Add Persistent Disk (critical for campaign persistence)**
-Your service → **Disks** → Add Disk:
-- Name: `bot-data`
-- Mount Path: `/opt/render/project/src/data`
-- Size: 1 GB (free tier available)
+4. Create `.env` file:
+```bash
+cp .env.example .env
+# Edit .env with your credentials
+```
 
-Without this disk, all active campaigns are lost on every redeploy.
+5. Run the bot:
+```bash
+python bot.py
+```
 
-**Step 5 — Deploy**
-Click **Deploy** — the bot is live.
+## Environment Variables
+
+| Variable | Required | Description | Default |
+|----------|----------|-------------|---------|
+| `BOT_TOKEN` | ✅ Yes | Telegram bot token from @BotFather | - |
+| `OPENAI_API_KEY` | ✅ Yes | OpenAI API key | - |
+| `WEBHOOK_URL` | ❌ No | Public URL for webhook mode | - |
+| `PORT` | ❌ No | Server port | `10000` |
+| `DATABASE_URL` | ❌ No | Database connection string | `sqlite:///bot.db` |
+
+## How It Works
+
+### Campaign Lifecycle
+
+1. **Activation** (`/write` command):
+   - Bot verifies admin privileges
+   - Generates first post immediately
+   - Schedules remaining 49 posts
+
+2. **Posting Schedule**:
+   - Posts every 20 minutes
+   - 10 posts per day maximum
+   - 50 posts total (5 days)
+
+3. **Daily Reset**:
+   - Counter resets at midnight UTC
+   - Resumes posting next day
+
+4. **Completion**:
+   - Sends completion message
+   - Removes scheduled jobs
+   - Ready for new `/write` command
+
+### Database Schema
+
+**channels table:**
+- `chat_id`: Telegram channel ID (primary key)
+- `prompt_text`: Topic/prompt for content generation
+- `posts_total`: Total posts in campaign (50)
+- `posts_remaining`: Posts left to send
+- `posts_today`: Posts sent today (resets at midnight)
+- `status`: active, paused, completed, failed
+- `next_post_at`: Scheduled time for next post
+
+**posts table:**
+- `id`: Post record ID
+- `chat_id`: Channel ID
+- `post_number`: Sequence number (1-50)
+- `content`: Generated post content
+- `status`: pending, sent, failed
+
+## Content Generation
+
+The bot uses OpenAI GPT to create diverse, engaging content:
+
+### Post Types (Rotating)
+
+1. **Educational Insight** - Share valuable knowledge
+2. **Quick Tip** - Actionable advice
+3. **Thought-Provoking Question** - Engage the audience
+4. **Practical Example** - Real-world application
+5. **Key Takeaway** - Memorable summary
+6. **Myth-Busting** - Correct misconceptions
+7. **Step-by-Step Guide** - Process breakdown
+8. **Industry News Angle** - Current trends
+9. **Common Mistake Warning** - Help avoid errors
+10. **Success Story Framework** - Inspiring principles
+
+### Content Guidelines
+
+- 100-800 characters per post
+- Natural emoji usage (2-4 per post)
+- Conversational, engaging tone
+- Formatted for Telegram
+- No hashtags (Telegram style)
+- Hook at the beginning
+- Call-to-action at the end
+
+## Troubleshooting
+
+### Bot doesn't respond to commands
+
+1. Verify bot is admin in the channel
+2. Check that bot has posting permissions
+3. Ensure you're using commands as an admin
+
+### Posts aren't being sent
+
+1. Check `/status` to see campaign state
+2. Verify bot hasn't reached daily limit (10/day)
+3. Check Render.com logs for errors
+
+### OpenAI errors
+
+1. Verify `OPENAI_API_KEY` is set correctly
+2. Check OpenAI account has available credits
+3. Review rate limits on your OpenAI plan
+
+### Render.com free tier limitations
+
+**Important**: Render's free tier has a 15-minute idle timeout. For reliable 24/7 operation:
+
+- **Option 1**: Upgrade to Render's paid tier ($7+/month)
+- **Option 2**: Use a keep-alive service (ping every 10 minutes)
+- **Option 3**: Deploy to AWS Lambda (free tier available)
+
+## Advanced Configuration
+
+### Custom Post Schedule
+
+Edit `bot.py` to change posting frequency:
+
+```python
+# Campaign settings
+POSTS_TOTAL = 50      # Total posts
+POSTS_PER_DAY = 10    # Daily limit
+INTERVAL_MINUTES = 20 # Minutes between posts
+```
+
+### Custom OpenAI Model
+
+Edit `openai_client.py`:
+
+```python
+DEFAULT_MODEL = "gpt-4"  # or "gpt-3.5-turbo"
+MAX_TOKENS = 1000
+TEMPERATURE = 0.8
+```
+
+### Using PostgreSQL on Render
+
+1. Create a PostgreSQL instance on Render
+2. Copy the "Internal Database URL"
+3. Add to environment variables as `DATABASE_URL`
+
+## Security Best Practices
+
+1. **Never commit `.env` file** - It's in `.gitignore` for a reason
+2. **Rotate API keys regularly** - Especially if compromised
+3. **Use webhook mode in production** - More secure than polling
+4. **Verify admin status** - Bot checks before executing commands
+5. **Validate permissions** - Bot verifies posting rights
+
+## API Costs
+
+OpenAI API usage costs approximately:
+
+- **GPT-3.5-turbo**: ~$0.002 per post = $0.10 per campaign (50 posts)
+- **GPT-4**: ~$0.03 per post = $1.50 per campaign (50 posts)
+
+For 10 channels running campaigns: ~$1-15/month
+
+## License
+
+MIT License - Feel free to use, modify, and distribute!
+
+## Support
+
+Need help? Here are some resources:
+
+- [python-telegram-bot docs](https://docs.python-telegram-bot.org/)
+- [OpenAI API docs](https://platform.openai.com/docs)
+- [Render.com docs](https://render.com/docs)
 
 ---
 
-## How it works
-
-### Multi-agent architecture
-Each channel that uses `/write` gets an independent record in `data/channels.json` keyed by its Telegram channel ID (captured automatically — no hardcoding). The PTB job queue holds a separate repeating job per channel. When the bot restarts, `on_startup()` reads the file and re-registers all active jobs.
-
-### Posting schedule
-- Posts every 20 minutes (configurable via `POST_INTERVAL_MINUTES`)
-- Maximum 10 posts per calendar day (resets at midnight UTC)
-- Campaign ends after 50 total posts (10/day × 5 days)
-- Bot sends a completion message when done
-
-### Content generation
-Each post is generated fresh via GPT-4o-mini with a rotating theme:
-1. Educational fact or concept
-2. Practical how-to or tip
-3. Motivational story or case study
-4. News-style trend or development
-5. Advanced insight or expert perspective
-
----
-
-## Cost estimate
-
-| Service | Cost |
-|---------|------|
-| Render.com Starter | $7/month |
-| OpenAI GPT-4o-mini | ~$0.01–0.03 per campaign (50 posts) |
-| Telegram Bot API | Free |
-
----
-
-## File structure
-
-```
-.
-├── bot.py              # Entire bot — single file
-├── requirements.txt    # 3 dependencies
-├── render.yaml         # Render deployment config
-├── .env.example        # Environment variable template
-├── .gitignore
-└── data/
-    └── channels.json   # Runtime state (auto-created, persist via Render Disk)
-```
+**Happy posting! 🚀**

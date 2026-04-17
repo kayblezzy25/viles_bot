@@ -1,16 +1,23 @@
+# Render.com deployment configuration
+# This file tells Render how to build and deploy your bot
+
 services:
   - type: web
-    name: telegram-channel-bot
-    env: python
+    name: telegram-ai-content-bot
+    runtime: python
+    plan: standard
     buildCommand: pip install -r requirements.txt
-    startCommand: python webhook_bot.py
+    startCommand: python bot.py
     envVars:
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: BOT_TOKEN
+        sync: false  # Set this in Render dashboard
       - key: OPENAI_API_KEY
-        sync: false
+        sync: false  # Set this in Render dashboard
       - key: WEBHOOK_URL
-        fromService:
-          name: telegram-channel-bot
-          type: web
-          property: host
+        sync: false  # Set this in Render dashboard (optional)
+      - key: DATABASE_URL
+        sync: false  # Set this in Render dashboard (optional, defaults to SQLite)
+    healthCheckPath: /health
+    autoDeploy: true
