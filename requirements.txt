@@ -1,4 +1,2 @@
-# FIX: Use latest PTB with Python 3.14 support
-python-telegram-bot[job-queue]==21.10
-openai==1.6.1
-python-dotenv==1.0.0
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+OPENAI_API_KEY=your_openai_api_key_here
