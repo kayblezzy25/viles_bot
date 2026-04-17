@@ -15,9 +15,11 @@ from sqlalchemy.sql import func
 # Database configuration
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///bot.db")
 
-# Handle Render.com PostgreSQL URL format
+# Handle Render.com PostgreSQL URL format and use pg8000 driver
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+pg8000://", 1)
+elif DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+pg8000://", 1)
 
 Base = declarative_base()
 
