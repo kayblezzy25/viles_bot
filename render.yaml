@@ -1,35 +1,11 @@
-# FIX B4: type: worker — NOT type: web.
-# type: web requires the process to bind to an HTTP port. This bot has none,
-# so Render marks it as crashed and restarts it in an infinite loop.
-# type: worker has no port requirement — correct for background bots.
-
 services:
   - type: worker
     name: telegram-channel-bot
-    runtime: python
-    plan: starter                       # $7/mo — never sleeps, essential for 24/7 posting
+    env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
-
-    # ── IMPORTANT: Persistent Disk (FIX B5) ──────────────────────────────────
-    # Without this, data/channels.json is wiped on every redeploy and all
-    # active campaigns are lost. Add via Render Dashboard:
-    #   Your service → Disks → Add Disk
-    #   Name: bot-data
-    #   Mount Path: /opt/render/project/src/data
-    #   Size: 1 GB (free)
-    # ─────────────────────────────────────────────────────────────────────────
-
+    startCommand: python main.py
     envVars:
       - key: TELEGRAM_BOT_TOKEN
-        sync: false                     # Set manually in Render dashboard
+        sync: false
       - key: OPENAI_API_KEY
-        sync: false                     # Set manually in Render dashboard
-
-      # Optional overrides (defaults shown):
-      - key: POST_INTERVAL_MINUTES
-        value: "20"                     # Minutes between posts
-      - key: POSTS_PER_DAY
-        value: "10"                     # Max posts per calendar day
-      - key: MAX_DAYS
-        value: "5"                      # Campaign length in days
+        sync: false
